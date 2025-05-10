@@ -1,0 +1,38 @@
+{
+  "name": "openexpoota-client",
+  "version": "1.0.0",
+  "description": "Client library for OpenExpoOTA - A self-hosted OTA update system for Expo apps",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "jest"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "expo",
+    "react-native",
+    "ota",
+    "updates"
+  ],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "expo-constants": ">=14.0.0",
+    "expo-updates": ">=0.15.0",
+    "react": ">=16.13.1",
+    "react-native": ">=0.63.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "@types/react-native": "^0.69.0",
+    "typescript": "^4.9.5"
+  },
+  "dependencies": {
+    "expo-constants": "^14.4.2",
+    "expo-updates": "^0.16.4"
+  }
+}
