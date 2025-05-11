@@ -16,7 +16,7 @@ export interface UpdatesContextValue {
 interface UpdatesProviderProps {
     children: ReactNode;
     config: {
-        apiUrl: string;
+        backendUrl: string;
         appSlug: string;
         appKey: string;
         channel?: ReleaseChannel;

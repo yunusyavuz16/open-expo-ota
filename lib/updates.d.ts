@@ -15,7 +15,7 @@ export default class SelfHostedUpdates {
     /**
      * Download the latest update
      */
-    downloadUpdate(): Promise<void>;
+    downloadUpdate(manifest?: any): Promise<void>;
     /**
      * Apply a downloaded update
      */

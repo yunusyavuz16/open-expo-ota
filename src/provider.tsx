@@ -24,7 +24,7 @@ const UpdatesContext = createContext<UpdatesContextValue | undefined>(undefined)
 interface UpdatesProviderProps {
   children: ReactNode;
   config: {
-    apiUrl: string;
+    backendUrl: string;
     appSlug: string;
     appKey: string;
     channel?: ReleaseChannel;
@@ -36,7 +36,7 @@ interface UpdatesProviderProps {
 // Convert provider config to SelfHostedUpdateConfig
 const convertConfig = (config: UpdatesProviderProps['config']): SelfHostedUpdateConfig => {
   return {
-    apiUrl: config.apiUrl,
+    backendUrl: config.backendUrl,
     appSlug: config.appSlug,
     appKey: config.appKey,
     channel: config.channel,

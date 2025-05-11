@@ -103,7 +103,7 @@ export const useUpdates = (config: SelfHostedUpdateConfig) => {
     return () => {
       removeListener();
     };
-  }, [config.apiUrl, config.appSlug]); // Reinitialize if API URL or app slug changes
+  }, [config.backendUrl, config.appSlug]); // Reinitialize if backend URL or app slug changes
 
   // Check for updates
   const checkForUpdates = async () => {

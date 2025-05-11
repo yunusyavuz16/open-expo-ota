@@ -5,7 +5,7 @@ import Constants from 'expo-constants';
 
 // Sample configuration for the provider
 const config = {
-  apiUrl: 'http://localhost:3000/api',
+  backendUrl: 'http://localhost:3000/api',
   appSlug: 'example-app',
   appKey: 'your-app-key-from-cli', // Get this from the CLI when you create your app
   channel: ReleaseChannel.DEVELOPMENT,

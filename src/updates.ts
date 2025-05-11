@@ -12,27 +12,27 @@ import {
  * Main class for handling OTA updates from the OpenExpoOTA server
  */
 export default class SelfHostedUpdates {
-  private config: Required<Omit<SelfHostedUpdateConfig, 'appKey'>> & { appKey: string };
+  private config: Required<Omit<SelfHostedUpdateConfig, 'appKey'>> & { appKey?: string };
   private listeners: UpdateEventListener[] = [];
   private isChecking = false;
   private lastCheck: Date | null = null;
 
   constructor(config: SelfHostedUpdateConfig) {
-    if (!config.appKey) {
-      throw new Error('appKey is required for OpenExpoOTA client');
-    }
-
     // Set defaults for optional config
     this.config = {
-      apiUrl: config.apiUrl,
+      backendUrl: config.backendUrl || 'http://localhost:3000/api',
       appSlug: config.appSlug,
-      appKey: config.appKey,
+      appKey: config.appKey, // Now optional
       channel: config.channel || ReleaseChannel.PRODUCTION,
       runtimeVersion: config.runtimeVersion || Constants.expoConfig?.version || '1.0.0',
       checkOnLaunch: config.checkOnLaunch !== false,
       autoInstall: config.autoInstall !== false,
       debug: config.debug || false
     };
+
+    if (!this.config.appSlug) {
+      throw new Error('appSlug is required for OpenExpoOTA client');
+    }
 
     // Add update listener from expo-updates
     ExpoUpdates.addListener(this.handleExpoUpdateEvent);
@@ -42,7 +42,7 @@ export default class SelfHostedUpdates {
       this.checkForUpdates();
     }
 
-    this.log('OpenExpoOTA client initialized');
+    this.log('OpenExpoOTA client initialized with app slug:', this.config.appSlug);
   }
 
   /**
@@ -63,43 +63,57 @@ export default class SelfHostedUpdates {
       const platformStr = Platform.OS === 'ios' ? 'ios' : 'android';
 
       // Build the API URL with query parameters
-      const url = `${this.config.apiUrl}/apps/${this.config.appSlug}/updates/check?` +
+      const url = `${this.config.backendUrl}/manifest/${this.config.appSlug}?` +
         `channel=${this.config.channel}&` +
-        `runtimeVersion=${this.config.runtimeVersion}&` +
+        `runtimeVersion=${encodeURIComponent(this.config.runtimeVersion)}&` +
         `platform=${platformStr}`;
 
+      this.log('Fetching from URL:', url);
+
       // Fetch from the API
-      const response = await fetch(url, {
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'X-App-Key': this.config.appKey
-        }
-      });
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      };
+
+      // Add app key if provided (backward compatibility)
+      if (this.config.appKey) {
+        headers['X-App-Key'] = this.config.appKey;
+      }
+
+      const response = await fetch(url, { headers });
 
       if (!response.ok) {
+        // Handle different error cases
+        if (response.status === 404) {
+          this.log('No updates found for this app and version');
+          this.emitEvent({ type: 'updateNotAvailable' });
+          return;
+        }
+
         throw new Error(`API request failed: ${response.status} ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const manifest = await response.json();
       this.lastCheck = new Date();
 
-      if (data.available) {
-        this.log('Update available:', data.manifest);
+      if (manifest && manifest.version) {
+        this.log('Update available:', manifest);
         this.emitEvent({
           type: 'updateAvailable',
-          manifest: data.manifest
+          manifest
         });
 
         if (this.config.autoInstall) {
-          await this.downloadUpdate();
+          await this.downloadUpdate(manifest);
         }
       } else {
-        this.log('No update available');
+        this.log('No update available or invalid manifest');
         this.emitEvent({ type: 'updateNotAvailable' });
       }
     } catch (error) {
-      this.log('Error checking for updates:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.log('Error checking for updates:', errorMessage);
       this.emitEvent({
         type: 'error',
         error: error instanceof Error ? error : new Error(String(error))
@@ -112,10 +126,28 @@ export default class SelfHostedUpdates {
   /**
    * Download the latest update
    */
-  async downloadUpdate(): Promise<void> {
+  async downloadUpdate(manifest?: any): Promise<void> {
     try {
       this.log('Downloading update...');
       this.emitEvent({ type: 'downloadStarted' });
+
+      // Configure expo-updates with the manifest URL
+      if (manifest && manifest.bundleUrl) {
+        // Update the bundleUrl to use the public endpoint if it's a relative URL
+        if (manifest.bundleUrl.startsWith('/')) {
+          manifest.bundleUrl = `${this.config.backendUrl}${manifest.bundleUrl}`;
+        }
+
+        // Update any asset URLs to use the public endpoints
+        if (manifest.assets && Array.isArray(manifest.assets)) {
+          manifest.assets = manifest.assets.map((asset: any) => {
+            if (asset.url && asset.url.startsWith('/')) {
+              asset.url = `${this.config.backendUrl}${asset.url}`;
+            }
+            return asset;
+          });
+        }
+      }
 
       // Use expo-updates to fetch the update
       await ExpoUpdates.fetchUpdateAsync();
@@ -128,7 +160,8 @@ export default class SelfHostedUpdates {
         this.applyUpdate();
       }
     } catch (error) {
-      this.log('Error downloading update:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.log('Error downloading update:', errorMessage);
       this.emitEvent({
         type: 'error',
         error: error instanceof Error ? error : new Error(String(error))
@@ -145,7 +178,8 @@ export default class SelfHostedUpdates {
       ExpoUpdates.reloadAsync();
       this.emitEvent({ type: 'installed' });
     } catch (error) {
-      this.log('Error applying update:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.log('Error applying update:', errorMessage);
       this.emitEvent({
         type: 'error',
         error: error instanceof Error ? error : new Error(String(error))

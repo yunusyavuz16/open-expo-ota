@@ -11,14 +11,16 @@ export declare enum Platform {
 export interface SelfHostedUpdateConfig {
     /**
      * The base URL of the OpenExpoOTA server API
+     * @default http://localhost:3000/api
      */
-    apiUrl: string;
+    backendUrl?: string;
     /**
      * The app slug that identifies your app on the server
      */
     appSlug: string;
     /**
      * The app authentication key for accessing updates
+     * @deprecated Not required for public endpoints
      */
     appKey?: string;
     /**
