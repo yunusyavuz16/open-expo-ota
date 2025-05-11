@@ -1,0 +1,16 @@
+# Source code
+src/
+
+# Development files
+.git/
+.env
+.env.example
+examples/
+node_modules/
+
+# IDE configurations
+.vscode/
+.idea/
+
+# Build artifacts
+*.log
