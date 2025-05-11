@@ -1,6 +1,6 @@
 {
   "name": "open-expo-ota",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Client library for OpenExpoOTA - A self-hosted OTA update system for Expo apps",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -27,10 +27,10 @@
     "url": "https://github.com/yunusyavuz16/self-hosted-ota"
   },
   "peerDependencies": {
-    "expo-constants": ">=14.0.0",
-    "expo-updates": ">=0.15.0",
-    "react": ">=16.13.1",
-    "react-native": ">=0.63.0"
+    "expo-constants": "*",
+    "expo-updates": "*",
+    "react": "*",
+    "react-native": "*"
   },
   "devDependencies": {
     "@types/react": "^18.0.0",

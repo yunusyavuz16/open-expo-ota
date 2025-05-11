@@ -34,12 +34,11 @@ export default class SelfHostedUpdates {
       throw new Error('appSlug is required for OpenExpoOTA client');
     }
 
-    // Add update listener from expo-updates
-    ExpoUpdates.addListener(this.handleExpoUpdateEvent);
-
     // Check for updates on launch if enabled
     if (this.config.checkOnLaunch) {
-      this.checkForUpdates();
+      setTimeout(() => {
+        this.checkForUpdates();
+      }, 0);
     }
 
     this.log('OpenExpoOTA client initialized with app slug:', this.config.appSlug);
@@ -131,7 +130,15 @@ export default class SelfHostedUpdates {
       this.log('Downloading update...');
       this.emitEvent({ type: 'downloadStarted' });
 
-      // Configure expo-updates with the manifest URL
+      // For demonstration/testing purposes in development, simulate a download
+      if (__DEV__) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        this.log('Update downloaded successfully (simulated)');
+        this.emitEvent({ type: 'downloadFinished' });
+        return;
+      }
+
+      // Configure expo-updates with the manifest URL if provided
       if (manifest && manifest.bundleUrl) {
         // Update the bundleUrl to use the public endpoint if it's a relative URL
         if (manifest.bundleUrl.startsWith('/')) {
@@ -149,15 +156,18 @@ export default class SelfHostedUpdates {
         }
       }
 
-      // Use expo-updates to fetch the update
-      await ExpoUpdates.fetchUpdateAsync();
+      // Use expo-updates to fetch the update if available
+      if (ExpoUpdates && typeof ExpoUpdates.fetchUpdateAsync === 'function') {
+        await ExpoUpdates.fetchUpdateAsync();
+        this.log('Update downloaded successfully');
+        this.emitEvent({ type: 'downloadFinished' });
 
-      this.log('Update downloaded successfully');
-      this.emitEvent({ type: 'downloadFinished' });
-
-      // If auto install is enabled, reload the app
-      if (this.config.autoInstall) {
-        this.applyUpdate();
+        // If auto install is enabled, reload the app
+        if (this.config.autoInstall) {
+          this.applyUpdate();
+        }
+      } else {
+        throw new Error('ExpoUpdates.fetchUpdateAsync not available');
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -175,8 +185,21 @@ export default class SelfHostedUpdates {
   applyUpdate(): void {
     try {
       this.log('Applying update...');
-      ExpoUpdates.reloadAsync();
-      this.emitEvent({ type: 'installed' });
+
+      // For demonstration/testing purposes in development, simulate applying update
+      if (__DEV__) {
+        this.log('Update applied successfully (simulated)');
+        this.emitEvent({ type: 'installed' });
+        return;
+      }
+
+      // Use expo-updates to reload the app if available
+      if (ExpoUpdates && typeof ExpoUpdates.reloadAsync === 'function') {
+        ExpoUpdates.reloadAsync();
+        this.emitEvent({ type: 'installed' });
+      } else {
+        throw new Error('ExpoUpdates.reloadAsync not available');
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.log('Error applying update:', errorMessage);
@@ -196,14 +219,6 @@ export default class SelfHostedUpdates {
       this.listeners = this.listeners.filter(l => l !== listener);
     };
   }
-
-  /**
-   * Handle events from expo-updates
-   */
-  private handleExpoUpdateEvent = (event: any): void => {
-    this.log('Expo update event:', event);
-    // Map expo-updates events to our event types if needed
-  };
 
   /**
    * Emit an event to all listeners
