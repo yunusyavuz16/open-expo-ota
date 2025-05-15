@@ -57,6 +57,7 @@ export default class SelfHostedUpdates {
       this.isChecking = true;
       this.emitEvent({ type: 'checking' });
       this.log('Checking for updates...');
+      this.log('Current runtime version:', this.config.runtimeVersion);
 
       // Get the device platform
       const platformStr = Platform.OS === 'ios' ? 'ios' : 'android';
@@ -97,7 +98,14 @@ export default class SelfHostedUpdates {
       this.lastCheck = new Date();
 
       if (manifest && manifest.version) {
+        // Log more details about the manifest
         this.log('Update available:', manifest);
+        this.log(`Found version ${manifest.version} - current runtime version is ${this.config.runtimeVersion}`);
+
+        // Quick version comparison for debugging
+        const isNewer = this.compareVersions(manifest.version, this.config.runtimeVersion);
+        this.log(`Is ${manifest.version} newer than ${this.config.runtimeVersion}? ${isNewer ? 'Yes' : 'No'}`);
+
         this.emitEvent({
           type: 'updateAvailable',
           manifest
@@ -120,6 +128,26 @@ export default class SelfHostedUpdates {
     } finally {
       this.isChecking = false;
     }
+  }
+
+  /**
+   * Compare two version strings, returning true if v1 is newer than v2
+   */
+  private compareVersions(v1: string, v2: string): boolean {
+    const v1Parts = v1.split('.').map(Number);
+    const v2Parts = v2.split('.').map(Number);
+
+    this.log(`Comparing versions: ${v1} vs ${v2}`);
+
+    for (let i = 0; i < Math.max(v1Parts.length, v2Parts.length); i++) {
+      const v1Part = v1Parts[i] || 0;
+      const v2Part = v2Parts[i] || 0;
+
+      if (v1Part > v2Part) return true;
+      if (v1Part < v2Part) return false;
+    }
+
+    return false; // Versions are equal
   }
 
   /**
