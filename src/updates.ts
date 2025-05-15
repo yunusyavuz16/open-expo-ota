@@ -158,14 +158,6 @@ export default class SelfHostedUpdates {
       this.log('Downloading update...');
       this.emitEvent({ type: 'downloadStarted' });
 
-      // For demonstration/testing purposes in development, simulate a download
-      if (__DEV__) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        this.log('Update downloaded successfully (simulated)');
-        this.emitEvent({ type: 'downloadFinished' });
-        return;
-      }
-
       // Configure expo-updates with the manifest URL if provided
       if (manifest && manifest.bundleUrl) {
         // Update the bundleUrl to use the public endpoint if it's a relative URL
@@ -213,13 +205,6 @@ export default class SelfHostedUpdates {
   applyUpdate(): void {
     try {
       this.log('Applying update...');
-
-      // For demonstration/testing purposes in development, simulate applying update
-      if (__DEV__) {
-        this.log('Update applied successfully (simulated)');
-        this.emitEvent({ type: 'installed' });
-        return;
-      }
 
       // Use expo-updates to reload the app if available
       if (ExpoUpdates && typeof ExpoUpdates.reloadAsync === 'function') {
