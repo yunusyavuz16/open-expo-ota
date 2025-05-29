@@ -1,12 +1,232 @@
 import * as ExpoUpdates from 'expo-updates';
 import Constants from 'expo-constants';
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 import {
   SelfHostedUpdateConfig,
   UpdateEvent,
   UpdateEventListener,
   ReleaseChannel
 } from './types';
+
+// Check if we're running in Expo Go
+const isExpoGo = (): boolean => {
+  try {
+    // Multiple checks to detect Expo Go
+    const hasProjectId = Constants.expoConfig?.extra?.eas?.projectId !== undefined;
+    const isStoreClient = Constants.executionEnvironment === 'storeClient';
+    const isExpoGoApp = Constants.appOwnership === 'expo';
+
+    return !hasProjectId || isStoreClient || isExpoGoApp;
+  } catch {
+    return true; // Default to Expo Go if we can't determine
+  }
+};
+
+/**
+ * Expo Go compatible update manager that simulates OTA updates
+ */
+class ExpoGoUpdateManager {
+  private config: Required<Omit<SelfHostedUpdateConfig, 'appKey'>> & { appKey?: string };
+  private listeners: UpdateEventListener[] = [];
+  private manifest: any = null;
+  private isChecking = false;
+
+  constructor(config: Required<Omit<SelfHostedUpdateConfig, 'appKey'>> & { appKey?: string }) {
+    this.config = config;
+  }
+
+  async checkForUpdates(): Promise<void> {
+    if (this.isChecking) {
+      this.log('Already checking for updates, skipping');
+      return;
+    }
+
+    try {
+      this.isChecking = true;
+      this.emitEvent({ type: 'checking' });
+      this.log('Checking for updates in Expo Go mode...');
+
+      // Get the device platform
+      const platformStr = Platform.OS === 'ios' ? 'ios' : 'android';
+
+      // Build the API URL
+      const url = `${this.config.backendUrl}/manifest/${this.config.appSlug}?` +
+        `channel=${this.config.channel}&` +
+        `runtimeVersion=${encodeURIComponent(this.config.runtimeVersion)}&` +
+        `platform=${platformStr}`;
+
+      this.log('Fetching from URL:', url);
+
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      };
+
+      if (this.config.appKey) {
+        headers['X-App-Key'] = this.config.appKey;
+      }
+
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          this.log('No updates found for this app and version');
+          this.emitEvent({ type: 'updateNotAvailable' });
+          return;
+        }
+        throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+      }
+
+      const manifest = await response.json();
+      this.manifest = manifest;
+
+      if (manifest && manifest.version) {
+        this.log('Update available:', manifest);
+        this.emitEvent({
+          type: 'updateAvailable',
+          manifest
+        });
+
+        if (this.config.autoInstall) {
+          await this.downloadUpdate();
+        }
+      } else {
+        this.log('No update available or invalid manifest');
+        this.emitEvent({ type: 'updateNotAvailable' });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.log('Error checking for updates:', errorMessage);
+      this.emitEvent({
+        type: 'error',
+        error: error instanceof Error ? error : new Error(String(error))
+      });
+    } finally {
+      this.isChecking = false;
+    }
+  }
+
+  async downloadUpdate(): Promise<void> {
+    try {
+      if (!this.manifest) {
+        throw new Error('No update available to download');
+      }
+
+      this.log('Downloading update in Expo Go...');
+      this.emitEvent({ type: 'downloadStarted' });
+
+      // Get the bundle URL from the manifest
+      const bundleUrl = this.manifest.bundleUrl;
+      if (!bundleUrl) {
+        throw new Error('No bundle URL found in manifest');
+      }
+
+      // Download the bundle
+      const response = await fetch(bundleUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download bundle: ${response.status} ${response.statusText}`);
+      }
+
+      // Get the bundle content
+      const bundleContent = await response.text();
+
+      // Store the bundle in memory (we'll use it when applying the update)
+      this.manifest.bundleContent = bundleContent;
+
+      this.log('Download completed');
+      this.emitEvent({ type: 'downloadFinished' });
+
+      if (this.config.autoInstall) {
+        this.applyUpdate();
+      }
+    } catch (error) {
+      this.emitEvent({
+        type: 'error',
+        error: error instanceof Error ? error : new Error(String(error))
+      });
+    }
+  }
+
+  applyUpdate(): void {
+    try {
+      this.log('Applying update in Expo Go...');
+
+      if (!this.manifest?.bundleContent) {
+        throw new Error('No bundle content available to apply');
+      }
+
+      // In Expo Go, we'll use a custom update mechanism
+      // This will be handled by the app's update system
+      const updateInfo = {
+        type: 'expo-go-update',
+        manifest: this.manifest,
+        bundleContent: this.manifest.bundleContent,
+        timestamp: Date.now()
+      };
+
+      // Store the update info in memory
+      (global as any).__EXPO_GO_UPDATE__ = updateInfo;
+
+      // Show success message
+      Alert.alert(
+        '✅ Update Ready!',
+        'The update has been downloaded and is ready to be applied.\n\n' +
+        'Please restart the app to apply the update.',
+        [
+          {
+            text: 'Restart Now',
+            onPress: () => {
+              // Reset state
+              this.manifest = null;
+              this.emitEvent({ type: 'installed' });
+              // Reload the app
+              window.location.reload();
+            }
+          },
+          {
+            text: 'Later',
+            onPress: () => {
+              this.manifest = null;
+              this.emitEvent({ type: 'installed' });
+            }
+          }
+        ]
+      );
+
+    } catch (error) {
+      this.emitEvent({
+        type: 'error',
+        error: error instanceof Error ? error : new Error(String(error))
+      });
+    }
+  }
+
+  addEventListener(listener: UpdateEventListener): () => void {
+    this.listeners.push(listener);
+    return () => {
+      const index = this.listeners.indexOf(listener);
+      if (index > -1) {
+        this.listeners.splice(index, 1);
+      }
+    };
+  }
+
+  private emitEvent(event: UpdateEvent): void {
+    this.listeners.forEach(listener => {
+      try {
+        listener(event);
+      } catch (error) {
+        console.error('Error in update event listener:', error);
+      }
+    });
+  }
+
+  private log(...args: any[]): void {
+    if (this.config.debug) {
+      console.log('[OpenExpoOTA]', ...args);
+    }
+  }
+}
 
 /**
  * Main class for handling OTA updates from the OpenExpoOTA server
@@ -16,13 +236,15 @@ export default class SelfHostedUpdates {
   private listeners: UpdateEventListener[] = [];
   private isChecking = false;
   private lastCheck: Date | null = null;
+  private expoGoManager: ExpoGoUpdateManager | null = null;
+  private isInExpoGo: boolean;
 
   constructor(config: SelfHostedUpdateConfig) {
     // Set defaults for optional config
     this.config = {
       backendUrl: config.backendUrl || 'http://localhost:3000/api',
       appSlug: config.appSlug,
-      appKey: config.appKey, // Now optional
+      appKey: config.appKey,
       channel: config.channel || ReleaseChannel.PRODUCTION,
       runtimeVersion: config.runtimeVersion || Constants.expoConfig?.version || '1.0.0',
       checkOnLaunch: config.checkOnLaunch !== false,
@@ -34,11 +256,21 @@ export default class SelfHostedUpdates {
       throw new Error('appSlug is required for OpenExpoOTA client');
     }
 
+    // Detect environment
+    this.isInExpoGo = isExpoGo();
+
+    if (this.isInExpoGo) {
+      this.log('Running in Expo Go - using simulation mode');
+      this.expoGoManager = new ExpoGoUpdateManager(this.config);
+    } else {
+      this.log('Running in development/production build - using expo-updates');
+    }
+
     // Check for updates on launch if enabled
     if (this.config.checkOnLaunch) {
       setTimeout(() => {
         this.checkForUpdates();
-      }, 0);
+      }, 1000); // Small delay to allow app to initialize
     }
 
     this.log('OpenExpoOTA client initialized with app slug:', this.config.appSlug);
@@ -48,6 +280,10 @@ export default class SelfHostedUpdates {
    * Check for updates from the server
    */
   async checkForUpdates(): Promise<void> {
+    if (this.isInExpoGo && this.expoGoManager) {
+      return this.expoGoManager.checkForUpdates();
+    }
+
     if (this.isChecking) {
       this.log('Already checking for updates, skipping');
       return;
@@ -154,6 +390,10 @@ export default class SelfHostedUpdates {
    * Download the latest update
    */
   async downloadUpdate(manifest?: any): Promise<void> {
+    if (this.isInExpoGo && this.expoGoManager) {
+      return this.expoGoManager.downloadUpdate();
+    }
+
     try {
       this.log('Downloading update...');
       this.emitEvent({ type: 'downloadStarted' });
@@ -200,13 +440,16 @@ export default class SelfHostedUpdates {
   }
 
   /**
-   * Apply a downloaded update
+   * Apply the downloaded update
    */
   applyUpdate(): void {
+    if (this.isInExpoGo && this.expoGoManager) {
+      return this.expoGoManager.applyUpdate();
+    }
+
     try {
       this.log('Applying update...');
 
-      // Use expo-updates to reload the app if available
       if (ExpoUpdates && typeof ExpoUpdates.reloadAsync === 'function') {
         ExpoUpdates.reloadAsync();
         this.emitEvent({ type: 'installed' });
@@ -224,18 +467,43 @@ export default class SelfHostedUpdates {
   }
 
   /**
-   * Add an event listener
+   * Add an event listener for update events
    */
   addEventListener(listener: UpdateEventListener): () => void {
+    if (this.isInExpoGo && this.expoGoManager) {
+      return this.expoGoManager.addEventListener(listener);
+    }
+
     this.listeners.push(listener);
     return () => {
-      this.listeners = this.listeners.filter(l => l !== listener);
+      const index = this.listeners.indexOf(listener);
+      if (index > -1) {
+        this.listeners.splice(index, 1);
+      }
     };
   }
 
   /**
-   * Emit an event to all listeners
+   * Get the last check date
    */
+  getLastCheckDate(): Date | null {
+    return this.lastCheck;
+  }
+
+  /**
+   * Get current configuration
+   */
+  getConfig(): Readonly<typeof this.config> {
+    return this.config;
+  }
+
+  /**
+   * Check if running in Expo Go
+   */
+  isRunningInExpoGo(): boolean {
+    return this.isInExpoGo;
+  }
+
   private emitEvent(event: UpdateEvent): void {
     this.listeners.forEach(listener => {
       try {
@@ -246,9 +514,6 @@ export default class SelfHostedUpdates {
     });
   }
 
-  /**
-   * Log debug information if debug is enabled
-   */
   private log(...args: any[]): void {
     if (this.config.debug) {
       console.log('[OpenExpoOTA]', ...args);
