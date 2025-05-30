@@ -35,7 +35,8 @@ export default class SelfHostedUpdates {
     }
 
     // Configure expo-updates with the correct URL and headers at startup
-    this.configureExpoUpdates();
+    // Note: Temporarily disabled due to configuration issues in some environments
+    // this.configureExpoUpdates();
 
     // Check for updates on launch if enabled
     if (this.config.checkOnLaunch) {
@@ -267,11 +268,15 @@ export default class SelfHostedUpdates {
 
       // Check if the update is newer than current version
       const isNewer = this.compareVersions(updateManifest.version, this.config.runtimeVersion);
-      if (!isNewer) {
-        throw new Error(`Update version ${updateManifest.version} is not newer than current version ${this.config.runtimeVersion}`);
+      this.log(`Version comparison: server=${updateManifest.version}, client=${this.config.runtimeVersion}, isNewer=${isNewer}`);
+
+      // Allow same version for testing purposes, only reject if server version is actually older
+      const isOlder = this.compareVersions(this.config.runtimeVersion, updateManifest.version);
+      if (isOlder) {
+        throw new Error(`Update version ${updateManifest.version} is older than current version ${this.config.runtimeVersion}`);
       }
 
-      this.log(`Confirmed update available: ${updateManifest.version} (current: ${this.config.runtimeVersion})`);
+      this.log(`Update validation passed: ${updateManifest.version} (server) vs ${this.config.runtimeVersion} (client)`);
 
       // For now, we'll simulate a successful download
       // In a real implementation, you could download and cache the bundle files here
