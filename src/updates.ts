@@ -34,6 +34,9 @@ export default class SelfHostedUpdates {
       throw new Error('appSlug is required for OpenExpoOTA client');
     }
 
+    // Configure expo-updates with the correct URL and headers at startup
+    this.configureExpoUpdates();
+
     // Check for updates on launch if enabled
     if (this.config.checkOnLaunch) {
       setTimeout(() => {
@@ -42,6 +45,47 @@ export default class SelfHostedUpdates {
     }
 
     this.log('OpenExpoOTA client initialized with app slug:', this.config.appSlug);
+  }
+
+  /**
+   * Configure expo-updates to use our custom URL and headers
+   * This must be called at app startup for the configuration to take effect
+   */
+  private configureExpoUpdates(): void {
+    try {
+      // Get the device platform
+      const platformStr = Platform.OS === 'ios' ? 'ios' : 'android';
+
+      // Build the correct manifest URL that expo-updates should use
+      const manifestUrl = `${this.config.backendUrl}/manifest/${this.config.appSlug}?` +
+        `channel=${this.config.channel}&` +
+        `runtimeVersion=${encodeURIComponent(this.config.runtimeVersion)}&` +
+        `platform=${platformStr}`;
+
+      this.log('Configuring expo-updates with URL:', manifestUrl);
+
+      // Configure expo-updates to use our custom URL and headers
+      if (ExpoUpdates && typeof (ExpoUpdates as any).setUpdateURLAndRequestHeadersOverride === 'function') {
+        const requestHeaders: Record<string, string> = {};
+
+        // Add app key if provided (backward compatibility)
+        if (this.config.appKey) {
+          requestHeaders['X-App-Key'] = this.config.appKey;
+        }
+
+        // Override the expo-updates configuration to use our backend
+        (ExpoUpdates as any).setUpdateURLAndRequestHeadersOverride({
+          updateUrl: manifestUrl,
+          requestHeaders
+        });
+
+        this.log('expo-updates configured successfully with custom URL and headers');
+      } else {
+        this.log('Warning: setUpdateURLAndRequestHeadersOverride not available - updates may use default configuration');
+      }
+    } catch (error) {
+      this.log('Error configuring expo-updates:', error);
+    }
   }
 
   /**
@@ -158,27 +202,12 @@ export default class SelfHostedUpdates {
       this.log('Downloading update...');
       this.emitEvent({ type: 'downloadStarted' });
 
-      // Configure expo-updates with the manifest URL if provided
-      if (manifest && manifest.bundleUrl) {
-        // Update the bundleUrl to use the public endpoint if it's a relative URL
-        if (manifest.bundleUrl.startsWith('/')) {
-          manifest.bundleUrl = `${this.config.backendUrl}${manifest.bundleUrl}`;
-        }
-
-        // Update any asset URLs to use the public endpoints
-        if (manifest.assets && Array.isArray(manifest.assets)) {
-          manifest.assets = manifest.assets.map((asset: any) => {
-            if (asset.url && asset.url.startsWith('/')) {
-              asset.url = `${this.config.backendUrl}${asset.url}`;
-            }
-            return asset;
-          });
-        }
-      }
-
-      // Use expo-updates to fetch the update if available
+      // Use expo-updates to fetch the update (configuration was set at startup)
       if (ExpoUpdates && typeof ExpoUpdates.fetchUpdateAsync === 'function') {
-        await ExpoUpdates.fetchUpdateAsync();
+        this.log('Calling ExpoUpdates.fetchUpdateAsync()...');
+        const result = await ExpoUpdates.fetchUpdateAsync();
+        this.log('ExpoUpdates.fetchUpdateAsync() result:', result);
+
         this.log('Update downloaded successfully');
         this.emitEvent({ type: 'downloadFinished' });
 
@@ -192,6 +221,7 @@ export default class SelfHostedUpdates {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.log('Error downloading update:', errorMessage);
+      this.log('Full error object:', error);
       this.emitEvent({
         type: 'error',
         error: error instanceof Error ? error : new Error(String(error))
