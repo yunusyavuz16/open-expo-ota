@@ -86,12 +86,18 @@ export interface UpdateInstalledEvent {
   type: 'installed';
 }
 
+export interface UpdateReadyEvent {
+  type: 'updateReady';
+  manifest: Record<string, any>;
+}
+
 export type UpdateEvent =
   | CheckingEvent
   | UpdateAvailableEvent
   | UpdateNotAvailableEvent
   | UpdateErrorEvent
   | UpdateDownloadEvent
-  | UpdateInstalledEvent;
+  | UpdateInstalledEvent
+  | UpdateReadyEvent;
 
 export type UpdateEventListener = (event: UpdateEvent) => void;
