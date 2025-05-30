@@ -8,6 +8,9 @@ import {
   ReleaseChannel
 } from './types';
 
+// Import semver for targetVersion checking
+const semver = require('semver');
+
 /**
  * Main class for handling OTA updates from the OpenExpoOTA server
  */
@@ -35,8 +38,7 @@ export default class SelfHostedUpdates {
     }
 
     // Configure expo-updates with the correct URL and headers at startup
-    // Note: Temporarily disabled due to configuration issues in some environments
-    // this.configureExpoUpdates();
+    this.configureExpoUpdates();
 
     // Check for updates on launch if enabled
     if (this.config.checkOnLaunch) {
@@ -49,6 +51,38 @@ export default class SelfHostedUpdates {
   }
 
   /**
+   * Get the app binary version from Constants
+   */
+  private getAppBinaryVersion(): string {
+    // Try to get the app version (binary version) from Constants
+    return Constants.expoConfig?.version || Constants.manifest?.version || '1.0.0';
+  }
+
+  /**
+   * Check if the current app version is compatible with the update's targetVersion
+   */
+  private isTargetVersionCompatible(targetVersion: string): boolean {
+    if (!targetVersion) {
+      // If no targetVersion specified, update is compatible with all versions
+      return true;
+    }
+
+    const currentAppVersion = this.getAppBinaryVersion();
+    this.log(`Checking targetVersion compatibility: current app version ${currentAppVersion} vs targetVersion ${targetVersion}`);
+
+    try {
+      // Use semver to check if current version satisfies the target version range
+      const isCompatible = semver.satisfies(currentAppVersion, targetVersion);
+      this.log(`TargetVersion compatibility result: ${isCompatible}`);
+      return isCompatible;
+    } catch (error) {
+      this.log('Error checking targetVersion compatibility:', error);
+      // If semver parsing fails, assume incompatible for safety
+      return false;
+    }
+  }
+
+  /**
    * Configure expo-updates to use our custom URL and headers
    * This must be called at app startup for the configuration to take effect
    */
@@ -56,11 +90,13 @@ export default class SelfHostedUpdates {
     try {
       // Get the device platform
       const platformStr = Platform.OS === 'ios' ? 'ios' : 'android';
+      const appVersion = this.getAppBinaryVersion();
 
       // Build the correct manifest URL that expo-updates should use
       const manifestUrl = `${this.config.backendUrl}/manifest/${this.config.appSlug}?` +
         `channel=${this.config.channel}&` +
         `runtimeVersion=${encodeURIComponent(this.config.runtimeVersion)}&` +
+        `appVersion=${encodeURIComponent(appVersion)}&` +
         `platform=${platformStr}`;
 
       this.log('Configuring expo-updates with URL:', manifestUrl);
@@ -104,13 +140,17 @@ export default class SelfHostedUpdates {
       this.log('Checking for updates...');
       this.log('Current runtime version:', this.config.runtimeVersion);
 
-      // Get the device platform
+      // Get the device platform and app version
       const platformStr = Platform.OS === 'ios' ? 'ios' : 'android';
+      const appVersion = this.getAppBinaryVersion();
 
-      // Build the API URL with query parameters
+      this.log('Current app binary version:', appVersion);
+
+      // Build the API URL with query parameters including appVersion for targetVersion checking
       const url = `${this.config.backendUrl}/manifest/${this.config.appSlug}?` +
         `channel=${this.config.channel}&` +
         `runtimeVersion=${encodeURIComponent(this.config.runtimeVersion)}&` +
+        `appVersion=${encodeURIComponent(appVersion)}&` +
         `platform=${platformStr}`;
 
       this.log('Fetching from URL:', url);
@@ -146,6 +186,14 @@ export default class SelfHostedUpdates {
         // Log more details about the manifest
         this.log('Update available:', manifest);
         this.log(`Found version ${manifest.version} - current runtime version is ${this.config.runtimeVersion}`);
+
+        // Check targetVersion compatibility on client side as additional verification
+        const targetVersion = manifest.targetVersion;
+        if (targetVersion && !this.isTargetVersionCompatible(targetVersion)) {
+          this.log(`Update rejected: targetVersion ${targetVersion} not compatible with current app version ${appVersion}`);
+          this.emitEvent({ type: 'updateNotAvailable' });
+          return;
+        }
 
         // Quick version comparison for debugging
         const isNewer = this.compareVersions(manifest.version, this.config.runtimeVersion);
@@ -196,119 +244,32 @@ export default class SelfHostedUpdates {
   }
 
   /**
-   * Reconfigure expo-updates and notify user to restart
-   * This is needed when the app configuration changes
-   */
-  async reconfigureAndRestart(): Promise<void> {
-    try {
-      this.log('Reconfiguring expo-updates...');
-
-      // Configure expo-updates with new settings
-      this.configureExpoUpdates();
-
-      // Emit event to notify user they need to restart
-      this.emitEvent({
-        type: 'error', // Using error type to show alert
-        error: new Error('Configuration updated. Please close and reopen the app completely to apply changes.')
-      });
-
-    } catch (error) {
-      this.log('Error reconfiguring expo-updates:', error);
-      this.emitEvent({
-        type: 'error',
-        error: error instanceof Error ? error : new Error(String(error))
-      });
-    }
-  }
-
-  /**
-   * Download the latest update using custom HTTP approach
-   * This bypasses expo-updates.fetchUpdateAsync() which has configuration issues
+   * Download the latest update
    */
   async downloadUpdate(manifest?: any): Promise<void> {
     try {
-      this.log('Starting custom download process...');
+      this.log('Downloading update...');
       this.emitEvent({ type: 'downloadStarted' });
 
-      // Get the latest manifest if not provided
-      let updateManifest = manifest;
-      if (!updateManifest) {
-        this.log('Getting latest manifest...');
-        const platformStr = Platform.OS === 'ios' ? 'ios' : 'android';
-        const url = `${this.config.backendUrl}/manifest/${this.config.appSlug}?` +
-          `channel=${this.config.channel}&` +
-          `runtimeVersion=${encodeURIComponent(this.config.runtimeVersion)}&` +
-          `platform=${platformStr}`;
+      // Use expo-updates to fetch the update (configuration was set at startup)
+      if (ExpoUpdates && typeof ExpoUpdates.fetchUpdateAsync === 'function') {
+        this.log('Calling ExpoUpdates.fetchUpdateAsync()...');
+        const result = await ExpoUpdates.fetchUpdateAsync();
+        this.log('ExpoUpdates.fetchUpdateAsync() result:', result);
 
-        const headers: Record<string, string> = {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        };
+        this.log('Update downloaded successfully');
+        this.emitEvent({ type: 'downloadFinished' });
 
-        if (this.config.appKey) {
-          headers['X-App-Key'] = this.config.appKey;
+        // If auto install is enabled, reload the app
+        if (this.config.autoInstall) {
+          this.applyUpdate();
         }
-
-        const response = await fetch(url, { headers });
-        if (!response.ok) {
-          throw new Error(`Failed to get manifest: ${response.status} ${response.statusText}`);
-        }
-        updateManifest = await response.json();
-        this.log('Got manifest for download:', updateManifest);
-      }
-
-      // Since expo-updates.fetchUpdateAsync() has configuration issues,
-      // we'll use a custom approach that simulates the download
-      this.log('Simulating download process...');
-
-      // Validate that we have the correct manifest
-      if (!updateManifest || !updateManifest.version) {
-        throw new Error('Invalid manifest received');
-      }
-
-      // Check if the update is newer than current version
-      const isNewer = this.compareVersions(updateManifest.version, this.config.runtimeVersion);
-      this.log(`Version comparison: server=${updateManifest.version}, client=${this.config.runtimeVersion}, isNewer=${isNewer}`);
-
-      // Allow same version for testing purposes, only reject if server version is actually older
-      const isOlder = this.compareVersions(this.config.runtimeVersion, updateManifest.version);
-      if (isOlder) {
-        throw new Error(`Update version ${updateManifest.version} is older than current version ${this.config.runtimeVersion}`);
-      }
-
-      this.log(`Update validation passed: ${updateManifest.version} (server) vs ${this.config.runtimeVersion} (client)`);
-
-      // For now, we'll simulate a successful download
-      // In a real implementation, you could download and cache the bundle files here
-
-      // Simulate download progress
-      const progressSteps = [0.2, 0.4, 0.6, 0.8, 1.0];
-      for (const progress of progressSteps) {
-        await new Promise(resolve => setTimeout(resolve, 200)); // Simulate download time
-        this.emitEvent({
-          type: 'downloadProgress',
-          progress
-        });
-      }
-
-      this.log('Custom download completed successfully');
-      this.emitEvent({ type: 'downloadFinished' });
-
-      // Since we can't directly apply the update without expo-updates,
-      // we need to instruct the user to restart the app
-      if (this.config.autoInstall) {
-        this.applyUpdate();
       } else {
-        // Emit a custom event to inform the UI that manual restart is needed
-        this.emitEvent({
-          type: 'updateReady',
-          manifest: updateManifest
-        });
+        throw new Error('ExpoUpdates.fetchUpdateAsync not available');
       }
-
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      this.log('Error in custom download:', errorMessage);
+      this.log('Error downloading update:', errorMessage);
       this.log('Full error object:', error);
       this.emitEvent({
         type: 'error',
